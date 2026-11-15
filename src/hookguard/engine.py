@@ -26,6 +26,7 @@ class Report:
     timings: Dict[str, float] = field(default_factory=dict)
     llm_stats: Optional[ReviewStats] = None
     llm_ran: bool = False
+    llm_raw: List[str] = field(default_factory=list)  # raw model replies (not printed)
 
     def to_dict(self) -> dict:
         return {
@@ -118,6 +119,7 @@ def run_pipeline(
             report.llm_ran = result.stats.llm_calls > 0 or result.stats.cached > 0
             report.llm_stats = result.stats
             report.findings.extend(result.findings)
+            report.llm_raw = result.raw_responses
             for err in result.errors:
                 report.warnings.append(f"LLM: {err}")
             llm_failed = bool(result.errors) and not report.llm_ran

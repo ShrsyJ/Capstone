@@ -69,12 +69,15 @@ class Backend:
     default_host = ""
 
     def __init__(self, model: str, host: str = "", timeout: float = 60,
-                 temperature: float = 0.0, num_ctx: int = 8192):
+                 temperature: float = 0.0, num_ctx: int = 8192, think: Optional[bool] = None):
         self.model = model
         self.host = (host or self.default_host).rstrip("/")
         self.timeout = timeout
         self.temperature = temperature
         self.num_ctx = num_ctx
+        # Reasoning models (e.g. qwen3) "think" before answering unless told not to.
+        # None = don't send the option (models without a thinking mode).
+        self.think = think
 
     def chat(self, system: str, user: str) -> str:  # pragma: no cover - interface
         raise NotImplementedError
@@ -96,6 +99,8 @@ class OllamaBackend(Backend):
             "keep_alive": "10m",  # keep the model warm between commits
             "options": {"temperature": self.temperature, "num_ctx": self.num_ctx, "seed": 7},
         }
+        if self.think is not None:
+            payload["think"] = bool(self.think)
         resp = _request(f"{self.host}/api/chat", payload, self.timeout)
         try:
             return resp["message"]["content"]
@@ -161,7 +166,17 @@ def make_backend(llm_cfg: Dict[str, Any]) -> Backend:
         timeout=float(llm_cfg.get("timeout", 60)),
         temperature=float(llm_cfg.get("temperature", 0.0)),
         num_ctx=int(llm_cfg.get("num_ctx", 8192)),
+        think=_parse_think(llm_cfg.get("think")),
     )
+
+
+def _parse_think(value: Any) -> Optional[bool]:
+    """Config value -> True/False/None. "" or "auto" means: don't send the option."""
+    if value is None or (isinstance(value, str) and value.strip().lower() in ("", "auto")):
+        return None
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
 
 
 def timed_chat(backend: Backend, system: str, user: str) -> Tuple[str, float]:

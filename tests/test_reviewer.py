@@ -86,6 +86,22 @@ class ReviewerTests(unittest.TestCase):
             self.assertEqual(b2.prompts, [])
 
 
+class ThinkOptionTests(unittest.TestCase):
+    def _payload(self, think):
+        from fake_llm import FakeOllama
+        from hookguard.llm import make_backend
+        with FakeOllama() as fake:
+            make_backend({"backend": "ollama", "model": "fake-model", "host": fake.url, "think": think}).chat("s", "u")
+            return fake.requests[0]
+
+    def test_think_auto_is_not_sent(self):
+        self.assertNotIn("think", self._payload("auto"))
+
+    def test_think_false_is_sent(self):
+        self.assertIs(self._payload(False)["think"], False)
+        self.assertIs(self._payload("false")["think"], False)
+
+
 class PipelineTests(unittest.TestCase):
     def test_server_down_fails_open_by_default(self):
         c = cfg(host="http://127.0.0.1:9", timeout=2)  # nothing listens on port 9

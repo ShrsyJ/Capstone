@@ -5,8 +5,12 @@ from pathlib import Path
 EVAL = Path(__file__).resolve().parents[1] / "eval"
 sys.path.insert(0, str(EVAL))
 
+import json  # noqa: E402
+import tempfile  # noqa: E402
+
 from fake_secrets import FAKE_SECRETS, materialize  # noqa: E402
 from hookguard.secrets import SecretScanner  # noqa: E402
+from run_eval import load_cases  # noqa: E402
 
 
 class FakeSecretTests(unittest.TestCase):
@@ -27,6 +31,25 @@ class FakeSecretTests(unittest.TestCase):
             real = materialize(raw)
             hits = [f for i, l in enumerate(real.splitlines()) for f in scanner.scan_text(name, i + 1, l)]
             self.assertTrue(hits, f"{name} should trigger the scanner once materialized")
+
+
+class SplitTests(unittest.TestCase):
+    def test_load_cases_filters_by_split(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            for n in ("a.py", "b.py", "c.py"):
+                (d / n).write_text("x = 1\n")
+            labels = {"_comment": "x", "a.py": {"block": False, "split": "dev"},
+                      "b.py": {"block": True, "split": "test"}, "c.py": {"block": False}}
+            (d / "labels.json").write_text(json.dumps(labels))
+            names = lambda split: [c[0] for c in load_cases(d, d / "labels.json", split)]  # noqa: E731
+            self.assertEqual(names("dev"), ["a.py", "c.py"])  # missing split defaults to dev
+            self.assertEqual(names("test"), ["b.py"])
+            self.assertEqual(names("all"), ["a.py", "b.py", "c.py"])
+
+    def test_seed_cases_are_all_dev(self):
+        labels = json.loads((EVAL / "labels.json").read_text())
+        self.assertTrue(all(v["split"] == "dev" for k, v in labels.items() if not k.startswith("_")))
 
 
 if __name__ == "__main__":

@@ -39,6 +39,7 @@ class ReviewResult:
     findings: List[Finding] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     stats: ReviewStats = field(default_factory=ReviewStats)
+    raw_responses: List[str] = field(default_factory=list)  # model replies, for eval/debugging
 
 
 def render_patch(change: FileChange) -> List[str]:
@@ -210,6 +211,7 @@ class LLMReviewer:
                         t0 = time.monotonic()
                         text = self.backend.chat(SYSTEM_PROMPT, prompt)
                         stats.llm_calls += 1
+                        result.raw_responses.append(text)
                         raw_items = parse_model_json(text)
                         self._log(f"    done in {time.monotonic() - t0:.1f}s, {len(raw_items)} raw finding(s)")
                     except LLMError as exc:

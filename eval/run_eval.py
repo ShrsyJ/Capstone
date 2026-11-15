@@ -5,6 +5,10 @@ Modes
   llm      the local model alone (secret/static layers disabled) - ablation
   hybrid   the real tool: static layers first, then the model
 
+Splits
+  Every label has a "split" (train | dev | test; default dev). Tune prompts on dev
+  only; run --split test once, for the final numbers.
+
 Usage
   python eval/run_eval.py                                   # static baseline only
   python eval/run_eval.py --models qwen2.5-coder:1.5b qwen2.5-coder:3b
@@ -18,7 +22,9 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import platform
 import statistics
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -29,24 +35,32 @@ sys.path.insert(0, str(HERE.parent / "src"))
 from hookguard.config import DEFAULTS  # noqa: E402
 from hookguard.diff import file_as_change  # noqa: E402
 from hookguard.engine import run_pipeline  # noqa: E402
-from hookguard.llm import make_backend  # noqa: E402
+from hookguard import __version__  # noqa: E402
+from hookguard.llm import LLMError, _request, make_backend  # noqa: E402
+from hookguard.prompts import PROMPT_VERSION  # noqa: E402
 
 sys.path.insert(0, str(HERE))
 from fake_secrets import materialize  # noqa: E402
 
 
-def load_cases(cases_dir: Path, labels_path: Path):
+SPLITS = ("train", "dev", "test")
+
+
+def load_cases(cases_dir: Path, labels_path: Path, split: str = "dev"):
     labels = {k: v for k, v in json.loads(labels_path.read_text()).items() if not k.startswith("_")}
     cases = []
     for name, label in sorted(labels.items()):
+        if split != "all" and label.get("split", "dev") != split:
+            continue
         cases.append((name, materialize((cases_dir / name).read_text("utf-8")), label))
     return cases
 
 
-def make_cfg(mode: str, model: str, backend: str, host: str) -> dict:
+def make_cfg(mode: str, model: str, backend: str, host: str, llm_overrides: dict = None) -> dict:
     cfg = copy.deepcopy(DEFAULTS)
     cfg["exclude"] = []
     cfg["llm"].update(model=model or "", backend=backend, host=host, cache=False, total_timeout=600)
+    cfg["llm"].update(llm_overrides or {})
     if mode == "static":
         cfg["llm"]["enabled"] = False
     elif mode == "llm":
@@ -64,8 +78,8 @@ def pct(values, q):
     return values[k]
 
 
-def evaluate(cases, mode, model, backend, host, warmup=True):
-    cfg = make_cfg(mode, model, backend, host)
+def evaluate(cases, mode, model, backend, host, warmup=True, llm_overrides=None):
+    cfg = make_cfg(mode, model, backend, host, llm_overrides)
     if mode != "static" and warmup:
         # First call loads the model into memory; exclude that from latency numbers.
         run_pipeline([file_as_change("warmup.py", "x = 1\n")], cfg, progress=False)
@@ -83,6 +97,7 @@ def evaluate(cases, mode, model, backend, host, warmup=True):
             "findings": [f"{f.source}:{f.category}:{f.severity.label()}@L{f.line}" for f in rep.findings],
             "warnings": rep.warnings,
             "dropped_invalid": rep.llm_stats.dropped_invalid if rep.llm_stats else 0,
+            "raw": rep.llm_raw,
         })
     tp = sum(r["blocked"] and r["expected_block"] for r in rows)
     fp = sum(r["blocked"] and not r["expected_block"] for r in rows)
@@ -104,12 +119,42 @@ def evaluate(cases, mode, model, backend, host, warmup=True):
     return summary, rows
 
 
+def ollama_memory(host: str, model: str) -> dict:
+    """Resident size of a loaded model, from Ollama's /api/ps (bytes -> GB)."""
+    try:
+        resp = _request(f"{(host or 'http://127.0.0.1:11434').rstrip('/')}/api/ps", None, 5)
+    except LLMError:
+        return {}
+    for m in resp.get("models", []):
+        if m.get("name") == model or m.get("model") == model:
+            return {"ram_gb": round(m.get("size", 0) / 1e9, 2),
+                    "gpu_gb": round(m.get("size_vram", 0) / 1e9, 2),
+                    "context": m.get("context_length")}
+    return {}
+
+
+def machine_info(backend: str, host: str) -> dict:
+    info = {"python": platform.python_version(), "os": f"{platform.system()} {platform.release()}",
+            "arch": platform.machine()}
+    try:
+        info["cpu"] = subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip()
+        info["ram_gb"] = round(int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True)) / 2**30)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        pass
+    if backend == "ollama":
+        try:
+            info["ollama"] = _request(f"{(host or 'http://127.0.0.1:11434').rstrip('/')}/api/version", None, 5).get("version")
+        except LLMError:
+            pass
+    return info
+
+
 def to_markdown(summaries):
     cols = ["mode", "model", "precision", "recall", "f1", "accuracy", "fp", "fn",
-            "latency_mean_s", "latency_p95_s", "hallucinated_lines", "llm_errors"]
+            "latency_mean_s", "latency_p95_s", "hallucinated_lines", "llm_errors", "ram_gb"]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     for s in summaries:
-        lines.append("| " + " | ".join(str(s[c]) for c in cols) + " |")
+        lines.append("| " + " | ".join(str(s.get(c, "-")) for c in cols) + " |")
     return "\n".join(lines)
 
 
@@ -121,10 +166,27 @@ def main():
     ap.add_argument("--modes", nargs="*", default=["llm", "hybrid"], help="modes to run per model")
     ap.add_argument("--cases", default=str(HERE / "cases"))
     ap.add_argument("--labels", default=str(HERE / "labels.json"))
+    ap.add_argument("--split", default="dev", choices=[*SPLITS, "all"],
+                    help="which labelled split to run (tune on dev; run test only for final numbers)")
+    ap.add_argument("--num-ctx", type=int, help="override llm.num_ctx")
+    ap.add_argument("--timeout", type=float, help="override llm.timeout (seconds per request)")
+    ap.add_argument("--think", choices=["auto", "true", "false"], help="override llm.think")
+    ap.add_argument("--tag", default="", help="free-text label stored with the results")
     args = ap.parse_args()
 
-    cases = load_cases(Path(args.cases), Path(args.labels))
-    print(f"{len(cases)} cases ({sum(c[2]['block'] for c in cases)} should block)\n")
+    overrides = {}
+    if args.num_ctx:
+        overrides["num_ctx"] = args.num_ctx
+    if args.timeout:
+        overrides["timeout"] = args.timeout
+    if args.think:
+        overrides["think"] = args.think
+
+    cases = load_cases(Path(args.cases), Path(args.labels), args.split)
+    if not cases:
+        raise SystemExit(f"no cases in split '{args.split}'")
+    print(f"split={args.split}: {len(cases)} cases ({sum(c[2]['block'] for c in cases)} should block), "
+          f"prompt v{PROMPT_VERSION}\n")
 
     summaries, detail = [], {}
     s, rows = evaluate(cases, "static", "", args.backend, args.host)
@@ -132,24 +194,34 @@ def main():
     detail["static"] = rows
 
     for model in args.models:
-        cfg = make_cfg("hybrid", model, args.backend, args.host)
+        cfg = make_cfg("hybrid", model, args.backend, args.host, overrides)
         ok, msg = make_backend(cfg["llm"]).health()
         if not ok:
             print(f"skipping {model}: {msg}")
             continue
         for mode in args.modes:
             print(f"running {mode} with {model} ...", flush=True)
-            s, rows = evaluate(cases, mode, model, args.backend, args.host)
+            s, rows = evaluate(cases, mode, model, args.backend, args.host, llm_overrides=overrides)
+            if args.backend == "ollama":
+                s.update(ollama_memory(args.host, model))
             summaries.append(s)
             detail[f"{mode}:{model}"] = rows
 
+    meta = {
+        "split": args.split, "n_cases": len(cases), "prompt_version": PROMPT_VERSION,
+        "hookguard": __version__, "backend": args.backend, "llm_overrides": overrides,
+        "tag": args.tag, "machine": machine_info(args.backend, args.host),
+    }
     table = to_markdown(summaries)
     print("\n" + table)
     out_dir = HERE / "results"
     out_dir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    (out_dir / f"{stamp}.md").write_text(f"# hookguard eval {stamp}\n\n{table}\n", "utf-8")
-    (out_dir / f"{stamp}.json").write_text(json.dumps({"summary": summaries, "cases": detail}, indent=2), "utf-8")
+    header = (f"# hookguard eval {stamp}\n\nsplit **{args.split}** ({len(cases)} cases), prompt v{PROMPT_VERSION}, "
+              f"overrides {overrides or 'none'}{', tag: ' + args.tag if args.tag else ''}\n\n")
+    (out_dir / f"{stamp}.md").write_text(header + table + "\n", "utf-8")
+    (out_dir / f"{stamp}.json").write_text(
+        json.dumps({"meta": meta, "summary": summaries, "cases": detail}, indent=2), "utf-8")
     print(f"\nSaved eval/results/{stamp}.md and .json")
     misses = [r["case"] for rows in detail.values() for r in rows if not r["correct"]]
     if misses:
