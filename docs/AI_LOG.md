@@ -21,6 +21,7 @@ assistant carry a `Co-Authored-By: Claude` trailer, so `git log` is the detailed
 | Prompt v2 (rejected), v3 (kept) | `src/hookguard/prompts.py`, `llm.py` schema, `models.LLM_CATEGORIES` | Message-first schema order, category enum, neutral example. |
 | Token timings and paging | `llm.py`, `reviewer.py`, `engine.py`, `eval/run_eval.py` | Ollama/llama-server token counts and timings per request; swap traffic per run; other models unloaded before each run. |
 | `think = false` default | `config.py` | Thinking off unless set to `"auto"`. |
+| Prose skip | `engine.py`, `config.py` | `llm.skip_extensions`: docs are not sent to the model. |
 | Docs | `docs/EXPERIMENTS.md`, README results table, ROADMAP ticks, this file | |
 | Tests | `tests/test_eval_harness.py`, additions to `tests/test_reviewer.py`, `tests/fake_llm.py` | Tests for each item above (28 → 42). |
 
@@ -37,6 +38,7 @@ assistant carry a `Co-Authored-By: Claude` trailer, so `git log` is the detailed
 10. **The JSON schema's field order is now part of the "prompt".** Constrained decoding generates fields in order, so asking for the message before the category lets the label follow the explanation. Changing the schema bumps `PROMPT_VERSION`.
 11. **`think` defaults to `false`.** qwen3:4b with thinking on hit the 120 s timeout on `x = 1`. Ollama accepts `think:false` for non-thinking models (checked), so the default is safe.
 12. **Latency is only reported from runs with low paging.** On 8 GB, swap activity changed 3B's per-case latency by 2.5× within one run. Wall-clock numbers taken while swapping would be misleading.
+13. **Prose files skip the model but are still secret-scanned.** The hook blocked our own docs commit because the model read *descriptions* of vulnerabilities in Markdown as vulnerabilities. Leaked keys in a README are a real risk, so the secret scanner still runs on docs; only the LLM is skipped (`llm.skip_extensions`).
 
 ### Results produced (dev split, so not held-out)
 See `docs/EXPERIMENTS.md`. Headline: hybrid 3B with prompt v3 reaches strict recall 0.85, FP rate 0.2, p95 4.3 s on 3–10-line files. qwen3:4b reaches 0 false positives but misses auth, SSRF, MD5 and JWT, and pages heavily on 8 GB.

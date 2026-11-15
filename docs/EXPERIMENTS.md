@@ -157,6 +157,15 @@ static layer already blocks take about 0 s, because the model is skipped.
   pages heavily, so its numbers show what a user of this laptop would actually get, not
   the model's intrinsic speed.
 
+## Dogfooding: hookguard on its own commits
+
+The hook is installed in this repo, using qwen2.5-coder:3b and the default config.
+
+| commit | what happened | action |
+|---|---|---|
+| eval token timings (4 files) | ~26 s total, files reviewed one after another while the machine was swapping; 2 `medium` warnings, both nonsense ("crypto: Ollama reports durations in nanoseconds") | none (warnings don't block); logged |
+| Phase 1 docs | **blocked**: a `high` "injection" on a line of `docs/AI_LOG.md` that *describes* labelled vulnerable lines; a `medium` "hardcoded model version" on `ROADMAP.md` | fixed: prose files (`.md .rst .txt .adoc`) skip the model but are still secret-scanned (`llm.skip_extensions`) |
+
 ## Open questions after Phase 1
 1. Is 3B's 0.2 FP rate (2 of 10 clean cases) real or noise? Only Phase 2's larger set of
    negatives can say.
