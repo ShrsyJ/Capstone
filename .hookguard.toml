@@ -1,0 +1,9 @@
+# hookguard config for this project itself.
+# The test suite and eval dataset contain deliberately fake secrets and vulnerable
+# code, so they are excluded - otherwise the hook would block its own commits.
+block_on = "high"
+exclude = ["tests/*", "eval/cases/*", "eval/fake_secrets.py"]
+
+[llm]
+backend = "ollama"
+model = "qwen2.5-coder:3b"
