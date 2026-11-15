@@ -58,6 +58,9 @@ DEFAULTS: Dict[str, Any] = {
         "on_error": "warn",             # "warn" (fail open) or "block" (fail closed)
         "skip_if_blocked": True,        # don't wait for the model if a secret already blocks
         "cache": True,
+        # Prose files are not sent to the model: it reads *descriptions* of vulnerabilities
+        # as vulnerabilities. The secret scanner still checks them.
+        "skip_extensions": [".md", ".markdown", ".rst", ".txt", ".adoc"],
     },
 }
 
@@ -144,4 +147,6 @@ can_block = true
 on_error = "warn"             # "warn" = commit anyway if the model is down; "block" = refuse
 skip_if_blocked = true        # skip the model when a secret/static rule already blocks the commit
 cache = true
+# Prose/docs are secret-scanned but not sent to the model (it flags descriptions of bugs as bugs)
+skip_extensions = [".md", ".markdown", ".rst", ".txt", ".adoc"]
 """

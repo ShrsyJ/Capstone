@@ -145,6 +145,19 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(rep.blocked)
         self.assertEqual(rep.findings[0].severity, Severity.CRITICAL)
 
+    def test_prose_files_are_secret_scanned_but_not_sent_to_the_model(self):
+        from fake_llm import FakeOllama
+        with FakeOllama() as fake:
+            c = cfg(host=fake.url, model="fake-model")
+            doc = file_as_change("NOTES.md", "Calling danger(x) is an injection risk.\n")
+            code = file_as_change("a.py", "x = 1\n")
+            rep = run_pipeline([doc, code], c, progress=False)
+            self.assertEqual(len(fake.requests), 1)
+            self.assertNotIn("NOTES.md", fake.requests[0]["messages"][-1]["content"])
+            self.assertFalse(rep.blocked)
+        leak = file_as_change("README.md", f'Use key {fakes.AWS_KEY_ID} to start\n')
+        self.assertTrue(run_pipeline([leak], cfg(), use_llm=False).blocked)
+
     def test_excluded_files_are_skipped(self):
         rep = run_pipeline([file_as_change("package-lock.json", f'"k": "{fakes.AWS_KEY_ID}"')], cfg(), use_llm=False)
         self.assertFalse(rep.blocked)

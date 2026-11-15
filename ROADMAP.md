@@ -4,9 +4,10 @@ A suggested plan from the working prototype in this folder to a finished capston
 Each phase ends with something you can demo.
 
 ## Phase 0 — Setup (this week)
-- [ ] Install Ollama, `ollama pull qwen2.5-coder:3b` (and `:1.5b`, `:7b` if RAM allows)
-- [ ] `pip install -e ".[dev]"`, run `pytest` (all green), `hookguard doctor --smoke`
-- [ ] `git init` this folder, then `hookguard install` so the project reviews itself
+- [x] Install Ollama, pull `qwen2.5-coder:1.5b`, `:3b` and `qwen3:4b` (7B doesn't fit 8 GB; see docs/EXPERIMENTS.md)
+- [x] `pip install -e ".[dev]"`, run `pytest` (all green), `hookguard doctor --smoke`
+- [x] `git init` this folder, then `hookguard install` so the project reviews itself
+- [x] Real-model shakedown and prompt iteration v1 → v3 on the dev split (2026-11-15)
 - [ ] Write the problem statement: cloud copilots send code off-machine; secrets leak via commits;
       existing scanners (gitleaks, detect-secrets, semgrep) are pattern-only and miss context
 

@@ -17,7 +17,12 @@ assistant carry a `Co-Authored-By: Claude` trailer, so `git log` is the detailed
 | Eval harness | `eval/run_eval.py`, `eval/labels.json` | `--split/--num-ctx/--timeout/--think/--tag`; results record prompt version, machine, Ollama version, model RAM and raw model replies. |
 | `think` option | `llm.py`, `config.py` | Lets reasoning models (qwen3) be told not to "think". |
 | Missing-model bug fix | `llm.py`, `reviewer.py` | New `LLMUnavailable` error stops the LLM stage after one failed request. |
-| Tests | `tests/test_eval_harness.py`, additions to `tests/test_reviewer.py`, `tests/fake_llm.py` | Tests for each item above. |
+| Strict metric | `eval/run_eval.py`, `eval/labels.json` | `strict_recall`/`strict_precision`/`fp_rate`; vulnerable `lines` and accepted `also` categories labelled for p01–p13. |
+| Prompt v2 (rejected), v3 (kept) | `src/hookguard/prompts.py`, `llm.py` schema, `models.LLM_CATEGORIES` | Message-first schema order, category enum, neutral example. |
+| Token timings and paging | `llm.py`, `reviewer.py`, `engine.py`, `eval/run_eval.py` | Ollama/llama-server token counts and timings per request; swap traffic per run; other models unloaded before each run. |
+| `think = false` default | `config.py` | Thinking off unless set to `"auto"`. |
+| Docs | `docs/EXPERIMENTS.md`, README results table, ROADMAP ticks, this file | |
+| Tests | `tests/test_eval_harness.py`, additions to `tests/test_reviewer.py`, `tests/fake_llm.py` | Tests for each item above (28 → 42). |
 
 ### Decisions and why
 1. **Fake secrets are built at runtime rather than written out.** The GitHub repo is public. GitHub push protection and hookguard's own hook both scan for secret-shaped strings, and a literal fake key in history can't be removed without rewriting history. This was done *before* the first commit, so no complete fake key exists anywhere in the history.
@@ -26,8 +31,21 @@ assistant carry a `Co-Authored-By: Claude` trailer, so `git log` is the detailed
 4. **All 23 toy cases are the Phase 1 *dev* split.** Splitting 23 cases into dev and test would leave a test set too small to mean anything. Prompts are tuned on these cases, so **their scores are not held-out results** and must never be reported as such. Real test numbers will come from the Phase 2 dataset.
 5. **7B model replaced with a ~4B model.** The machine has 8 GB of RAM. qwen2.5-coder:7b is 4.7 GB of weights plus about 0.5 GB of KV cache, which leaves too little for macOS and would swap. The Ollama registry was checked on 2026-11-15: `qwen3:4b` is 2.5 GB, `qwen3.5:4b` 3.3 GB, `gemma3:4b` 3.35 GB and `gemma4:e4b` 6.6 GB. `qwen3:4b` was chosen as the largest that fits comfortably. *Report this as a finding:* 7B does not fit an 8 GB laptop's latency budget.
 6. **A missing model or a server that is down stops the LLM stage once.** Before the fix, a missing model produced one warning per file and wasted a request each time. A *timeout* is still a per-chunk error, because one slow chunk shouldn't cancel review of the others.
+7. **Strict recall was added next to block-level recall.** 1.5B reached block-level recall 1.00 by flagging nearly every file as "injection". A metric that rewards blocking for the wrong reason would overstate the model in the report. The labelling rule (sink line plus the line where untrusted input enters; accepted alternative categories) is written into `labels.json` so Phase 2 can reuse it.
+8. **The v2 prompt was rejected even though it "sounds right".** The data showed it made both models worse. Keeping it would have been tuning by intuition.
+9. **Prompt tuning stopped at v3.** The remaining 1.5B errors are comprehension failures. More case-specific instructions would mean fitting the prompt to 23 dev cases.
+10. **The JSON schema's field order is now part of the "prompt".** Constrained decoding generates fields in order, so asking for the message before the category lets the label follow the explanation. Changing the schema bumps `PROMPT_VERSION`.
+11. **`think` defaults to `false`.** qwen3:4b with thinking on hit the 120 s timeout on `x = 1`. Ollama accepts `think:false` for non-thinking models (checked), so the default is safe.
+12. **Latency is only reported from runs with low paging.** On 8 GB, swap activity changed 3B's per-case latency by 2.5× within one run. Wall-clock numbers taken while swapping would be misleading.
+
+### Results produced (dev split, so not held-out)
+See `docs/EXPERIMENTS.md`. Headline: hybrid 3B with prompt v3 reaches strict recall 0.85, FP rate 0.2, p95 4.3 s on 3–10-line files. qwen3:4b reaches 0 false positives but misses auth, SSRF, MD5 and JWT, and pages heavily on 8 GB.
 
 ### Check or rewrite yourself
 - [ ] Re-read decision 2 and confirm you accept the trade-off; you may be asked about it in the viva.
 - [ ] Confirm the wording "dev split, tuned on" is used everywhere Phase 1 numbers appear.
+- [ ] Look over the `lines` labels for p01–p13 in `eval/labels.json` and check you agree with each one; they define strict recall.
+- [ ] Re-read the v2 → v3 reasoning in `docs/EXPERIMENTS.md` and be ready to explain why field order affects a constrained decoder.
+- [ ] Note in the report that every Phase 1 number is dev-split and from 3–10-line files.
+- [ ] Rewrite the EXPERIMENTS prose in your own words before quoting it in the report.
 - [ ] Read the `LLMUnavailable` change in `llm.py` (`_request`) and make sure you can explain the exception order: `HTTPError` must be caught before `URLError`, because `HTTPError` is a subclass of it.

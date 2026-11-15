@@ -106,17 +106,19 @@ def run_pipeline(
 
     already_blocked = any(f.severity >= block_on for f in report.findings)
 
-    # 3. Local LLM review
+    # 3. Local LLM review (code only; prose files were secret-scanned above)
+    skip_ext = {e.lower() for e in llm_cfg.get("skip_extensions", [])}
+    for_llm = [c for c in reviewable if PurePosixPath(c.path).suffix.lower() not in skip_ext]
     llm_enabled = llm_cfg.get("enabled", True) if use_llm is None else use_llm
     llm_failed = False
-    if llm_enabled and reviewable and already_blocked and llm_cfg.get("skip_if_blocked", True):
+    if llm_enabled and for_llm and already_blocked and llm_cfg.get("skip_if_blocked", True):
         report.warnings.append("LLM review skipped: commit is already blocked by deterministic checks")
-    elif llm_enabled and reviewable:
+    elif llm_enabled and for_llm:
         t = time.monotonic()
         try:
             backend = make_backend(llm_cfg)
             reviewer = LLMReviewer(backend, llm_cfg, cache_path=cache_path, progress=progress)
-            result = reviewer.review(reviewable)
+            result = reviewer.review(for_llm)
             report.llm_ran = result.stats.llm_calls > 0 or result.stats.cached > 0
             report.llm_stats = result.stats
             report.findings.extend(result.findings)

@@ -60,7 +60,7 @@ Design decisions worth defending in the capstone report:
 # 1. Install the local model runtime (once)
 brew install ollama            # or download from ollama.com
 ollama serve &                 # the desktop app starts this automatically
-ollama pull qwen2.5-coder:3b   # ~2 GB; use :1.5b on 8 GB machines
+ollama pull qwen2.5-coder:3b   # ~2 GB; the best model tested on an 8 GB Mac
 
 # 2. Install hookguard (from this folder)
 python3 -m venv .venv && source .venv/bin/activate
@@ -124,6 +124,7 @@ min_severity = "medium"        # ignore model findings below this
 can_block = true               # false = model findings only warn
 on_error = "warn"              # or "block" (fail closed)
 total_timeout = 120            # seconds for the whole LLM stage
+think = false                  # reasoning models (qwen3) otherwise think for minutes
 ```
 
 Environment overrides: `HOOKGUARD_MODEL`, `HOOKGUARD_HOST`, `HOOKGUARD_BACKEND`, `HOOKGUARD_NO_LLM=1`, `HOOKGUARD_SKIP=1`.
@@ -131,17 +132,31 @@ Environment overrides: `HOOKGUARD_MODEL`, `HOOKGUARD_HOST`, `HOOKGUARD_BACKEND`,
 ## Tests and evaluation
 
 ```bash
-pytest                                   # 28 tests, incl. real git commits against a fake Ollama server
+pytest                                   # 42 tests, incl. real git commits against a fake Ollama server
 python eval/run_eval.py                  # static-only baseline
-python eval/run_eval.py --models qwen2.5-coder:1.5b qwen2.5-coder:3b qwen2.5-coder:7b
+python eval/run_eval.py --models qwen2.5-coder:1.5b qwen2.5-coder:3b qwen3:4b
+python eval/run_eval.py --split test --models ...   # held-out split, final numbers only
 ```
 
 The eval compares three modes on a labelled dataset (`eval/cases`, `eval/labels.json`):
-`static` (no model), `llm` (model alone) and `hybrid` (the real tool), reporting precision,
-recall, F1, false positives, latency (mean / p95) and how many model findings were dropped
-as hallucinated line numbers. Current static baseline on the seed set: precision 1.00,
-recall 0.54. The six cases it misses (SQL built outside `execute`, path traversal, auth
-bypass, SSRF, MD5 passwords, unverified JWT) are what the LLM layer has to earn its keep on.
+`static` (no model), `llm` (model alone) and `hybrid` (the real tool). It reports
+block-level precision and recall, **strict recall** (right category on a labelled line),
+FP rate, latency (mean / p95), generation tokens/s, model RAM, hallucinated line numbers,
+and swap traffic during the run, since latency is unreliable when the machine pages.
+Fake secrets in cases are `__HG_FAKE_<NAME>__` tokens, filled in at load time by
+`eval/fake_secrets.py`.
+
+Phase 1 results on the 23 toy cases (**dev split, prompts tuned on it, so not held-out**;
+Apple M3, 8 GB, prompt v3):
+
+| mode | model | strict recall | FP rate | p95 latency | RAM |
+|---|---|---|---|---|---|
+| static | – | 0.54 | 0.0 | ~0 s | – |
+| hybrid | qwen2.5-coder:1.5b | 0.77 | 0.5 | 2.5 s | 1.4 GB |
+| hybrid | qwen2.5-coder:3b | **0.85** | 0.2 | 4.3 s | 2.3 GB |
+| hybrid | qwen3:4b (think off) | 0.69 | 0.0 | (machine paged) | 3.8 GB |
+
+The full history, caveats and open questions are in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 
 ## Project layout
 
