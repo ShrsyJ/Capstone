@@ -37,6 +37,7 @@ from hookguard.diff import file_as_change  # noqa: E402
 from hookguard.engine import run_pipeline  # noqa: E402
 from hookguard import __version__  # noqa: E402
 from hookguard.llm import LLMError, _request, make_backend  # noqa: E402
+from hookguard.models import Severity  # noqa: E402
 from hookguard.prompts import PROMPT_VERSION  # noqa: E402
 
 sys.path.insert(0, str(HERE))
@@ -44,6 +45,27 @@ from fake_secrets import materialize  # noqa: E402
 
 
 SPLITS = ("train", "dev", "test")
+
+# Static rules use finer category names than the LLM's closed list; map them onto it
+# so a finding from either layer can be compared with the label.
+CANONICAL = {
+    "sql-injection": "injection", "command-injection": "injection", "code-injection": "injection",
+    "insecure-tls": "crypto",
+}
+
+
+def canonical(category: str) -> str:
+    return CANONICAL.get(category, category)
+
+
+def strict_hit(findings, label, block_on) -> bool:
+    """A positive is truly *found* only if a blocking finding has the right category on a labelled line."""
+    wanted = {label.get("category")} | set(label.get("also", []))
+    lines = set(label.get("lines", []))
+    return any(
+        f.severity >= block_on and canonical(f.category) in wanted and (not lines or f.line in lines)
+        for f in findings
+    )
 
 
 def load_cases(cases_dir: Path, labels_path: Path, split: str = "dev"):
@@ -93,6 +115,8 @@ def evaluate(cases, mode, model, backend, host, warmup=True, llm_overrides=None)
             "expected_block": label["block"],
             "blocked": rep.blocked,
             "correct": rep.blocked == label["block"],
+            "strict_hit": bool(label["block"]) and rep.blocked and strict_hit(
+                rep.findings, label, Severity.parse(cfg.get("block_on", "high"))),
             "seconds": round(dt, 3),
             "findings": [f"{f.source}:{f.category}:{f.severity.label()}@L{f.line}" for f in rep.findings],
             "warnings": rep.warnings,
@@ -106,11 +130,17 @@ def evaluate(cases, mode, model, backend, host, warmup=True, llm_overrides=None)
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    positives = sum(r["expected_block"] for r in rows)
+    strict_tp = sum(r["strict_hit"] for r in rows)
     secs = [r["seconds"] for r in rows]
     summary = {
         "mode": mode, "model": model or "-", "tp": tp, "fp": fp, "fn": fn, "tn": tn,
         "precision": round(precision, 3), "recall": round(recall, 3), "f1": round(f1, 3),
         "accuracy": round((tp + tn) / len(rows), 3),
+        # strict: right category on a labelled line, not just "blocked for some reason"
+        "strict_recall": round(strict_tp / positives, 3) if positives else 0.0,
+        "strict_precision": round(strict_tp / (tp + fp), 3) if tp + fp else 0.0,
+        "fp_rate": round(fp / (fp + tn), 3) if fp + tn else 0.0,
         "latency_mean_s": round(statistics.mean(secs), 3),
         "latency_p95_s": round(pct(secs, 0.95), 3),
         "hallucinated_lines": sum(r["dropped_invalid"] for r in rows),
@@ -150,7 +180,7 @@ def machine_info(backend: str, host: str) -> dict:
 
 
 def to_markdown(summaries):
-    cols = ["mode", "model", "precision", "recall", "f1", "accuracy", "fp", "fn",
+    cols = ["mode", "model", "precision", "recall", "f1", "strict_recall", "strict_precision", "fp_rate", "fp", "fn",
             "latency_mean_s", "latency_p95_s", "hallucinated_lines", "llm_errors", "ram_gb"]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     for s in summaries:

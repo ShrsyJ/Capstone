@@ -10,7 +10,8 @@ import tempfile  # noqa: E402
 
 from fake_secrets import FAKE_SECRETS, materialize  # noqa: E402
 from hookguard.secrets import SecretScanner  # noqa: E402
-from run_eval import load_cases  # noqa: E402
+from hookguard.models import Finding, Severity  # noqa: E402
+from run_eval import load_cases, strict_hit  # noqa: E402
 
 
 class FakeSecretTests(unittest.TestCase):
@@ -50,6 +51,26 @@ class SplitTests(unittest.TestCase):
     def test_seed_cases_are_all_dev(self):
         labels = json.loads((EVAL / "labels.json").read_text())
         self.assertTrue(all(v["split"] == "dev" for k, v in labels.items() if not k.startswith("_")))
+
+
+class StrictHitTests(unittest.TestCase):
+    label = {"block": True, "category": "auth", "also": ["crypto"], "lines": [4, 5]}
+
+    def f(self, line, category, sev=Severity.HIGH):
+        return Finding(file="x.py", line=line, severity=sev, category=category, rule="r", message="m", source="llm")
+
+    def test_right_category_and_line(self):
+        self.assertTrue(strict_hit([self.f(4, "auth")], self.label, Severity.HIGH))
+        self.assertTrue(strict_hit([self.f(5, "crypto")], self.label, Severity.HIGH))  # accepted alternative
+
+    def test_wrong_category_line_or_severity_is_not_a_hit(self):
+        self.assertFalse(strict_hit([self.f(4, "injection")], self.label, Severity.HIGH))
+        self.assertFalse(strict_hit([self.f(2, "auth")], self.label, Severity.HIGH))
+        self.assertFalse(strict_hit([self.f(4, "auth", Severity.MEDIUM)], self.label, Severity.HIGH))
+
+    def test_static_categories_are_mapped(self):
+        label = {"block": True, "category": "injection", "lines": [2]}
+        self.assertTrue(strict_hit([self.f(2, "sql-injection")], label, Severity.HIGH))
 
 
 if __name__ == "__main__":
