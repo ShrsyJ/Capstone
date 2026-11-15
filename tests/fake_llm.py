@@ -47,7 +47,9 @@ class _Handler(BaseHTTPRequestHandler):
         if "hallucinate" in user:
             findings.append({"line": 9999, "severity": "critical", "category": "secret",
                              "message": "made up", "suggestion": ""})
-        self._send({"message": {"role": "assistant", "content": json.dumps({"findings": findings})}})
+        self._send({"message": {"role": "assistant", "content": json.dumps({"findings": findings})},
+                    "prompt_eval_count": 120, "eval_count": 8, "load_duration": 0,
+                    "prompt_eval_duration": 200_000_000, "eval_duration": 100_000_000})
 
 
 class FakeOllama:

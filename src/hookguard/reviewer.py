@@ -37,6 +37,7 @@ class ReviewResult:
     errors: List[str] = field(default_factory=list)
     stats: ReviewStats = field(default_factory=ReviewStats)
     raw_responses: List[str] = field(default_factory=list)  # model replies, for eval/debugging
+    usage: List[Dict[str, float]] = field(default_factory=list)  # per-request tokens/timings
 
 
 def render_patch(change: FileChange) -> List[str]:
@@ -209,6 +210,7 @@ class LLMReviewer:
                         text = self.backend.chat(SYSTEM_PROMPT, prompt)
                         stats.llm_calls += 1
                         result.raw_responses.append(text)
+                        result.usage.append(dict(getattr(self.backend, "last_usage", {}) or {}))
                         raw_items = parse_model_json(text)
                         self._log(f"    done in {time.monotonic() - t0:.1f}s, {len(raw_items)} raw finding(s)")
                     except LLMUnavailable as exc:

@@ -122,6 +122,8 @@ def evaluate(cases, mode, model, backend, host, warmup=True, llm_overrides=None)
             "warnings": rep.warnings,
             "dropped_invalid": rep.llm_stats.dropped_invalid if rep.llm_stats else 0,
             "raw": rep.llm_raw,
+            "usage": {k: round(sum(u.get(k, 0) for u in rep.llm_usage), 3)
+                      for k in ("tokens_in", "tokens_out", "load_s", "prompt_s", "gen_s")},
         })
     tp = sum(r["blocked"] and r["expected_block"] for r in rows)
     fp = sum(r["blocked"] and not r["expected_block"] for r in rows)
@@ -146,6 +148,10 @@ def evaluate(cases, mode, model, backend, host, warmup=True, llm_overrides=None)
         "hallucinated_lines": sum(r["dropped_invalid"] for r in rows),
         "llm_errors": sum(1 for r in rows for w in r["warnings"] if w.startswith("LLM:")),
     }
+    gen_s = sum(r["usage"]["gen_s"] for r in rows)
+    if gen_s:
+        summary["gen_tok_per_s"] = round(sum(r["usage"]["tokens_out"] for r in rows) / gen_s, 1)
+        summary["mean_tokens_out"] = round(statistics.mean(r["usage"]["tokens_out"] for r in rows), 1)
     return summary, rows
 
 
@@ -161,6 +167,16 @@ def ollama_memory(host: str, model: str) -> dict:
                     "gpu_gb": round(m.get("size_vram", 0) / 1e9, 2),
                     "context": m.get("context_length")}
     return {}
+
+
+def swap_used_gb():
+    """macOS swap in use (GB), or None. Heavy swap makes latency numbers meaningless."""
+    try:
+        out = subprocess.check_output(["sysctl", "-n", "vm.swapusage"], text=True)
+        used = out.split("used =")[1].split()[0]
+        return round(float(used.rstrip("MG")) / (1024 if used.endswith("M") else 1), 2)
+    except (OSError, subprocess.CalledProcessError, IndexError, ValueError):
+        return None
 
 
 def machine_info(backend: str, host: str) -> dict:
@@ -181,7 +197,7 @@ def machine_info(backend: str, host: str) -> dict:
 
 def to_markdown(summaries):
     cols = ["mode", "model", "precision", "recall", "f1", "strict_recall", "strict_precision", "fp_rate", "fp", "fn",
-            "latency_mean_s", "latency_p95_s", "hallucinated_lines", "llm_errors", "ram_gb"]
+            "latency_mean_s", "latency_p95_s", "gen_tok_per_s", "hallucinated_lines", "llm_errors", "ram_gb", "swap_gb_end"]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     for s in summaries:
         lines.append("| " + " | ".join(str(s.get(c, "-")) for c in cols) + " |")
@@ -218,6 +234,7 @@ def main():
     print(f"split={args.split}: {len(cases)} cases ({sum(c[2]['block'] for c in cases)} should block), "
           f"prompt v{PROMPT_VERSION}\n")
 
+    swap_start = swap_used_gb()
     summaries, detail = [], {}
     s, rows = evaluate(cases, "static", "", args.backend, args.host)
     summaries.append(s)
@@ -234,6 +251,7 @@ def main():
             s, rows = evaluate(cases, mode, model, args.backend, args.host, llm_overrides=overrides)
             if args.backend == "ollama":
                 s.update(ollama_memory(args.host, model))
+            s["swap_gb_end"] = swap_used_gb()
             summaries.append(s)
             detail[f"{mode}:{model}"] = rows
 
@@ -241,9 +259,12 @@ def main():
         "split": args.split, "n_cases": len(cases), "prompt_version": PROMPT_VERSION,
         "hookguard": __version__, "backend": args.backend, "llm_overrides": overrides,
         "tag": args.tag, "machine": machine_info(args.backend, args.host),
+        "swap_gb_start": swap_start, "swap_gb_end": swap_used_gb(),
     }
     table = to_markdown(summaries)
     print("\n" + table)
+    if args.models and meta["swap_gb_end"] and meta["swap_gb_end"] > 1.0:
+        print(f"\nWARNING: {meta['swap_gb_end']} GB of swap in use - latency numbers from this run are not reliable.")
     out_dir = HERE / "results"
     out_dir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")

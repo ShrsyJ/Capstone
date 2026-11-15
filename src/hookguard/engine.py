@@ -27,6 +27,7 @@ class Report:
     llm_stats: Optional[ReviewStats] = None
     llm_ran: bool = False
     llm_raw: List[str] = field(default_factory=list)  # raw model replies (not printed)
+    llm_usage: List[Dict[str, float]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -120,6 +121,7 @@ def run_pipeline(
             report.llm_stats = result.stats
             report.findings.extend(result.findings)
             report.llm_raw = result.raw_responses
+            report.llm_usage = result.usage
             for err in result.errors:
                 report.warnings.append(f"LLM: {err}")
             llm_failed = bool(result.errors) and not report.llm_ran

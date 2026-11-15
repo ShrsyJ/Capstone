@@ -94,6 +94,14 @@ class ThinkOptionTests(unittest.TestCase):
             make_backend({"backend": "ollama", "model": "fake-model", "host": fake.url, "think": think}).chat("s", "u")
             return fake.requests[0]
 
+    def test_usage_is_captured_from_ollama(self):
+        from fake_llm import FakeOllama
+        with FakeOllama() as fake:
+            rep = run_pipeline([file_as_change("a.py", "x = 1\n")], cfg(host=fake.url, model="fake-model"),
+                               progress=False)
+        self.assertEqual(rep.llm_usage, [{"tokens_in": 120, "tokens_out": 8, "load_s": 0.0,
+                                          "prompt_s": 0.2, "gen_s": 0.1}])
+
     def test_think_auto_is_not_sent(self):
         self.assertNotIn("think", self._payload("auto"))
 

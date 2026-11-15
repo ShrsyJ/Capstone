@@ -100,6 +100,8 @@ class Backend:
         # Reasoning models (e.g. qwen3) "think" before answering unless told not to.
         # None = don't send the option (models without a thinking mode).
         self.think = think
+        # Token counts / timings of the most recent request, when the server reports them.
+        self.last_usage: Dict[str, float] = {}
 
     def chat(self, system: str, user: str) -> str:  # pragma: no cover - interface
         raise NotImplementedError
@@ -124,6 +126,14 @@ class OllamaBackend(Backend):
         if self.think is not None:
             payload["think"] = bool(self.think)
         resp = _request(f"{self.host}/api/chat", payload, self.timeout)
+        ns = 1e9  # Ollama reports durations in nanoseconds
+        self.last_usage = {
+            "tokens_in": resp.get("prompt_eval_count", 0),
+            "tokens_out": resp.get("eval_count", 0),
+            "load_s": resp.get("load_duration", 0) / ns,
+            "prompt_s": resp.get("prompt_eval_duration", 0) / ns,
+            "gen_s": resp.get("eval_duration", 0) / ns,
+        } if isinstance(resp, dict) else {}
         try:
             return resp["message"]["content"]
         except (KeyError, TypeError) as exc:
@@ -158,6 +168,12 @@ class LlamaCppBackend(Backend):
             "response_format": {"type": "json_schema", "json_schema": {"name": "findings", "schema": FINDINGS_SCHEMA}},
         }
         resp = _request(f"{self.host}/v1/chat/completions", payload, self.timeout)
+        usage = resp.get("usage", {}) if isinstance(resp, dict) else {}
+        timings = resp.get("timings", {}) if isinstance(resp, dict) else {}
+        self.last_usage = {
+            "tokens_in": usage.get("prompt_tokens", 0), "tokens_out": usage.get("completion_tokens", 0),
+            "load_s": 0.0, "prompt_s": timings.get("prompt_ms", 0) / 1000, "gen_s": timings.get("predicted_ms", 0) / 1000,
+        }
         try:
             return resp["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
