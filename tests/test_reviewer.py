@@ -102,6 +102,10 @@ class ThinkOptionTests(unittest.TestCase):
         self.assertEqual(rep.llm_usage, [{"tokens_in": 120, "tokens_out": 8, "load_s": 0.0,
                                           "prompt_s": 0.2, "gen_s": 0.1}])
 
+    def test_think_is_off_by_default(self):
+        from hookguard.llm import make_backend
+        self.assertIs(make_backend(DEFAULTS["llm"]).think, False)
+
     def test_think_auto_is_not_sent(self):
         self.assertNotIn("think", self._payload("auto"))
 

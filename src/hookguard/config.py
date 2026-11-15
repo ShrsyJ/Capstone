@@ -49,7 +49,10 @@ DEFAULTS: Dict[str, Any] = {
         "max_chunk_chars": 6000,        # diff text per request
         "temperature": 0.0,
         "num_ctx": 8192,
-        "think": "auto",                # reasoning models: true/false; "auto" = don't send
+        # Reasoning models (qwen3, ...) "think" for hundreds of tokens before answering:
+        # 120 s+ on an 8 GB laptop. A commit hook can't afford that, so it's off by default.
+        # Ollama accepts the option for non-thinking models too. "auto" = don't send it.
+        "think": False,
         "min_severity": "medium",       # drop LLM findings below this
         "can_block": True,              # may LLM findings block, or only warn?
         "on_error": "warn",             # "warn" (fail open) or "block" (fail closed)
@@ -135,7 +138,7 @@ total_timeout = 120
 max_chunk_chars = 6000
 temperature = 0.0
 num_ctx = 8192
-think = "auto"                # false = turn off "thinking" in reasoning models (qwen3); "auto" = leave as is
+think = false                 # reasoning models (qwen3) think for minutes otherwise; "auto" = model default
 min_severity = "medium"
 can_block = true
 on_error = "warn"             # "warn" = commit anyway if the model is down; "block" = refuse
