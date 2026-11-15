@@ -18,6 +18,10 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from hookguard.models import LLM_CATEGORIES
+
+# Property order matters: Ollama and llama-server generate fields in this order, so the
+# model writes its explanation ("message") before committing to a category and severity.
 FINDINGS_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -27,12 +31,12 @@ FINDINGS_SCHEMA: Dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "line": {"type": "integer"},
-                    "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
-                    "category": {"type": "string"},
                     "message": {"type": "string"},
+                    "category": {"type": "string", "enum": list(LLM_CATEGORIES)},
+                    "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
                     "suggestion": {"type": "string"},
                 },
-                "required": ["line", "severity", "category", "message"],
+                "required": ["line", "message", "category", "severity"],
             },
         }
     },

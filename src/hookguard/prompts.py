@@ -5,7 +5,15 @@ categories, and permission to say "nothing found" - otherwise they over-report.
 Bump PROMPT_VERSION whenever you change the text so cached results are invalidated.
 """
 
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "3"
+
+# History (scores for each version are in docs/EXPERIMENTS.md):
+# v1: original prototype prompt.
+# v2: + "needs an untrusted source AND a sink" + a list of SAFE idioms. Rejected:
+#     1.5B got worse (FP rate 0.6 -> 0.7); listing safe idioms made it parrot them.
+# v3: v1 text, but (a) the JSON schema puts "message" before "category"/"severity" and
+#     restricts category to the closed list, and (b) the single example (a high-severity
+#     "injection" finding, which small models copied) is replaced by a neutral one.
 
 SYSTEM_PROMPT = """\
 You are a strict, security-focused code reviewer running inside a git pre-commit hook.
@@ -31,9 +39,12 @@ Do NOT report style, naming, formatting, comments, missing docs, missing tests, 
 Do NOT report anything in context or deleted lines. If unsure, do not report it.
 Clean code is the common case: {"findings": []} is the correct answer when nothing is wrong.
 
-"line" must be the number printed at the start of the "+" line.
-Respond with JSON only, in this shape:
-{"findings": [{"line": 12, "severity": "high", "category": "injection", "message": "short description", "suggestion": "short fix"}]}
+"line" must be the number printed at the start of the "+" line. Write "message" first,
+then pick the category that matches what the message describes.
+Respond with JSON only. Most changes need no findings:
+{"findings": []}
+When there is a real problem, each finding looks like this:
+{"findings": [{"line": <number>, "message": "<what is wrong>", "category": "<one category from the list>", "severity": "<low|medium|high|critical>", "suggestion": "<short fix>"}]}
 """
 
 USER_TEMPLATE = """\

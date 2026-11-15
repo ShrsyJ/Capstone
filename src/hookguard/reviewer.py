@@ -12,15 +12,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from hookguard.llm import Backend, LLMError, LLMUnavailable
-from hookguard.models import FileChange, Finding, Severity
+from hookguard.models import LLM_CATEGORIES, FileChange, Finding, Severity
 from hookguard.prompts import PROMPT_VERSION, SYSTEM_PROMPT, build_user_prompt
 from hookguard.secrets import redact_line
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
-_KNOWN_CATEGORIES = {
-    "secret", "injection", "unsafe-deserialization", "auth", "crypto",
-    "path-traversal", "ssrf", "dangerous-bug",
-}
+_KNOWN_CATEGORIES = set(LLM_CATEGORIES)
 LINE_SNAP_DISTANCE = 2  # tolerate small off-by-N line numbers from the model
 
 

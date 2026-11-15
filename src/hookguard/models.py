@@ -7,6 +7,13 @@ from enum import IntEnum
 from typing import List, Optional
 
 
+# The closed list of categories the LLM may use (the prompt explains each one).
+LLM_CATEGORIES = (
+    "secret", "injection", "unsafe-deserialization", "auth", "crypto",
+    "path-traversal", "ssrf", "dangerous-bug",
+)
+
+
 class Severity(IntEnum):
     LOW = 1
     MEDIUM = 2
