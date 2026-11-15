@@ -73,5 +73,17 @@ class StrictHitTests(unittest.TestCase):
         self.assertTrue(strict_hit([self.f(2, "sql-injection")], label, Severity.HIGH))
 
 
+
+class PagingTests(unittest.TestCase):
+    def test_paging_counters_shape(self):
+        from run_eval import paging_counters
+        pc = paging_counters()
+        if sys.platform == "darwin":
+            self.assertEqual(len(pc), 2)
+            self.assertTrue(all(v >= 0 for v in pc))
+        else:
+            self.assertIsNone(pc)
+
+
 if __name__ == "__main__":
     unittest.main()

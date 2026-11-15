@@ -45,6 +45,8 @@ from fake_secrets import materialize  # noqa: E402
 
 
 SPLITS = ("train", "dev", "test")
+# Swap traffic (in + out) during one mode's run above which its latency is flagged.
+PAGING_LIMIT_MB = 200
 
 # Static rules use finer category names than the LLM's closed list; map them onto it
 # so a finding from either layer can be compared with the label.
@@ -179,6 +181,39 @@ def swap_used_gb():
         return None
 
 
+def paging_counters():
+    """(swapins, swapouts) in MB since boot, from vm_stat; None off macOS.
+
+    The delta over a run shows whether the model was paging *during* it, which is
+    what ruins latency. Swap merely in use from earlier work doesn't matter."""
+    try:
+        out = subprocess.check_output(["vm_stat"], text=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    page = 16384
+    if "page size of" in out:
+        page = int(out.split("page size of")[1].split()[0])
+    vals = {}
+    for line in out.splitlines():
+        if line.startswith(("Swapins:", "Swapouts:")):
+            k, v = line.split(":")
+            vals[k] = int(v.strip().rstrip(".")) * page / 2**20
+    return (vals.get("Swapins", 0.0), vals.get("Swapouts", 0.0)) if vals else None
+
+
+def unload_other_models(host: str, keep: str) -> None:
+    """Ask Ollama to evict every loaded model except `keep`, so runs don't share RAM."""
+    base = (host or "http://127.0.0.1:11434").rstrip("/")
+    try:
+        loaded = _request(f"{base}/api/ps", None, 5).get("models", [])
+        for m in loaded:
+            name = m.get("name") or m.get("model")
+            if name and name != keep:
+                _request(f"{base}/api/generate", {"model": name, "keep_alive": 0}, 30)
+    except LLMError:
+        pass
+
+
 def machine_info(backend: str, host: str) -> dict:
     info = {"python": platform.python_version(), "os": f"{platform.system()} {platform.release()}",
             "arch": platform.machine()}
@@ -197,7 +232,7 @@ def machine_info(backend: str, host: str) -> dict:
 
 def to_markdown(summaries):
     cols = ["mode", "model", "precision", "recall", "f1", "strict_recall", "strict_precision", "fp_rate", "fp", "fn",
-            "latency_mean_s", "latency_p95_s", "gen_tok_per_s", "hallucinated_lines", "llm_errors", "ram_gb", "swap_gb_end"]
+            "latency_mean_s", "latency_p95_s", "gen_tok_per_s", "hallucinated_lines", "llm_errors", "ram_gb", "paging_mb"]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     for s in summaries:
         lines.append("| " + " | ".join(str(s.get(c, "-")) for c in cols) + " |")
@@ -246,12 +281,17 @@ def main():
         if not ok:
             print(f"skipping {model}: {msg}")
             continue
+        if args.backend == "ollama":
+            unload_other_models(args.host, model)
         for mode in args.modes:
             print(f"running {mode} with {model} ...", flush=True)
+            pg0 = paging_counters()
             s, rows = evaluate(cases, mode, model, args.backend, args.host, llm_overrides=overrides)
+            pg1 = paging_counters()
+            if pg0 and pg1:
+                s["paging_mb"] = round((pg1[0] - pg0[0]) + (pg1[1] - pg0[1]))
             if args.backend == "ollama":
                 s.update(ollama_memory(args.host, model))
-            s["swap_gb_end"] = swap_used_gb()
             summaries.append(s)
             detail[f"{mode}:{model}"] = rows
 
@@ -263,8 +303,11 @@ def main():
     }
     table = to_markdown(summaries)
     print("\n" + table)
-    if args.models and meta["swap_gb_end"] and meta["swap_gb_end"] > 1.0:
-        print(f"\nWARNING: {meta['swap_gb_end']} GB of swap in use - latency numbers from this run are not reliable.")
+    heavy = [f"{s['mode']}:{s['model']} ({s['paging_mb']} MB)" for s in summaries
+             if s.get("paging_mb", 0) > PAGING_LIMIT_MB]
+    if heavy:
+        print(f"\nWARNING: the machine was paging during: {', '.join(heavy)}. "
+              "Latency for those runs is not reliable; close other apps and re-run.")
     out_dir = HERE / "results"
     out_dir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
