@@ -34,6 +34,9 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         req = json.loads(self.rfile.read(length) or b"{}")
         self.server.requests.append(req)
+        if req.get("model") == "missing-model":  # mimic Ollama when a model isn't pulled
+            self._send({"error": "model 'missing-model' not found"}, 404)
+            return
         user = req["messages"][-1]["content"]
         findings = []
         for m in re.finditer(r"^\s*(\d+) \+ .*danger\(", user, re.M):

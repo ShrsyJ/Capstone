@@ -102,6 +102,20 @@ class ThinkOptionTests(unittest.TestCase):
         self.assertIs(self._payload("false")["think"], False)
 
 
+class UnavailableTests(unittest.TestCase):
+    def test_missing_model_stops_after_one_request_with_pull_hint(self):
+        from fake_llm import FakeOllama
+        with FakeOllama() as fake:
+            c = cfg(host=fake.url, model="missing-model")
+            files = [file_as_change(f"f{i}.py", "x = 1\n") for i in range(3)]
+            rep = run_pipeline(files, c, progress=False)
+            self.assertEqual(len(fake.requests), 1)
+            llm_warnings = [w for w in rep.warnings if w.startswith("LLM:")]
+            self.assertEqual(len(llm_warnings), 1)
+            self.assertIn("ollama pull missing-model", llm_warnings[0])
+            self.assertFalse(rep.blocked)  # fail open by default
+
+
 class PipelineTests(unittest.TestCase):
     def test_server_down_fails_open_by_default(self):
         c = cfg(host="http://127.0.0.1:9", timeout=2)  # nothing listens on port 9

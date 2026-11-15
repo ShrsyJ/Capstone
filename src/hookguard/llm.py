@@ -12,6 +12,7 @@ the model runs on this machine and code must not leave it.
 from __future__ import annotations
 
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -46,6 +47,13 @@ class LLMError(RuntimeError):
     pass
 
 
+class LLMUnavailable(LLMError):
+    """The backend can't serve any request (server down, model not pulled).
+
+    The reviewer stops at the first one instead of retrying every chunk.
+    """
+
+
 def _request(url: str, payload: Optional[dict], timeout: float) -> dict:
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
@@ -57,9 +65,19 @@ def _request(url: str, payload: Optional[dict], timeout: float) -> dict:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")[:300]
+        if exc.code == 404 and "not found" in body.lower() and "model" in body.lower():
+            model = (payload or {}).get("model", "")
+            raise LLMUnavailable(f"model '{model}' is not available on {url.split('/api')[0].split('/v1')[0]}"
+                                 f" (run: ollama pull {model})") from exc
         raise LLMError(f"HTTP {exc.code} from {url}: {body}") from exc
-    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as exc:
-        raise LLMError(f"cannot reach {url}: {getattr(exc, 'reason', exc)}") from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise LLMError(f"timed out after {timeout:.0f}s waiting for {url}") from exc
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            raise LLMError(f"timed out after {timeout:.0f}s waiting for {url}") from exc
+        raise LLMUnavailable(f"cannot reach {url}: {exc.reason}") from exc
+    except (ConnectionError, OSError) as exc:
+        raise LLMUnavailable(f"cannot reach {url}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise LLMError(f"invalid JSON from {url}") from exc
 

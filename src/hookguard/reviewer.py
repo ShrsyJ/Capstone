@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from hookguard.llm import Backend, LLMError
+from hookguard.llm import Backend, LLMError, LLMUnavailable
 from hookguard.models import FileChange, Finding, Severity
 from hookguard.prompts import PROMPT_VERSION, SYSTEM_PROMPT, build_user_prompt
 from hookguard.secrets import redact_line
@@ -214,11 +214,12 @@ class LLMReviewer:
                         result.raw_responses.append(text)
                         raw_items = parse_model_json(text)
                         self._log(f"    done in {time.monotonic() - t0:.1f}s, {len(raw_items)} raw finding(s)")
+                    except LLMUnavailable as exc:
+                        result.errors.append(str(exc))
+                        stats.seconds = time.monotonic() - start
+                        return result  # server down / model missing: retrying every chunk won't help
                     except LLMError as exc:
                         result.errors.append(f"{change.path}: {exc}")
-                        if "cannot reach" in str(exc):
-                            stats.seconds = time.monotonic() - start
-                            return result  # server is down; don't retry every chunk
                         continue
                     self.cache.put(key, raw_items)
                 for raw in raw_items:
